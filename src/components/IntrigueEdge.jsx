@@ -6,14 +6,14 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 
-function IntrigueEdge({ id, sourceX, sourceY, targetX, targetY, data, selected }) {
+function IntrigueEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }) {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
-    sourcePosition: 'bottom',
-    targetPosition: 'top',
+    sourcePosition: sourcePosition ?? 'bottom',
+    targetPosition: targetPosition ?? 'top',
   });
 
   const { setEdges } = useReactFlow();

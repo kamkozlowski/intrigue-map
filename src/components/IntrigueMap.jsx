@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -17,44 +17,69 @@ import EditNodePanel from './EditNodePanel';
 import EditEdgePanel from './EditEdgePanel';
 import Modal from './Modal';
 import IntrigueControls from './IntrigueControls';
+import MapsManagerModal from './MapsManagerModal';
 import { NODE_TYPES, NODE_TYPE_OPTIONS } from '../constants/nodeTypes';
+import {
+  getLastOpenedMapId,
+  getMapsList,
+  getMap,
+  saveMap,
+  setLastOpenedMapId,
+} from '../storage/mapsStorage';
 
 const nodeTypes = { intrigue: IntrigueNode };
 const edgeTypes = { intrigue: IntrigueEdge };
 
-const initialNodes = [
-  {
-    id: '1',
-    type: 'intrigue',
-    position: { x: 250, y: 100 },
-    data: { label: 'Przykładowy bohater', nodeType: 'hero', icon: '⚔️' },
-  },
-  {
-    id: '2',
-    type: 'intrigue',
-    position: { x: 450, y: 300 },
-    data: { label: 'Tawerna Pod Wilkiem', nodeType: 'place', icon: '🏰' },
-  },
-];
-
-const initialEdges = [
-  {
-    id: 'e1-2',
-    type: 'intrigue',
-    source: '1',
-    target: '2',
-    data: { label: 'Bywał tam ostatnio' },
-  },
-];
+const getInitialData = () => {
+  const lastId = getLastOpenedMapId();
+  if (lastId) {
+    const m = getMap(lastId);
+    if (m) return m;
+  }
+  const maps = getMapsList();
+  if (maps.length === 0) {
+    return {
+      nodes: [
+        { id: '1', type: 'intrigue', position: { x: 250, y: 100 }, data: { label: 'Przykładowy bohater', nodeType: 'hero' } },
+        { id: '2', type: 'intrigue', position: { x: 450, y: 300 }, data: { label: 'Tawerna Pod Wilkiem', nodeType: 'place' } },
+      ],
+      edges: [
+        { id: 'e1-2', type: 'intrigue', source: '1', target: '2', data: { label: 'Bywał tam ostatnio' } },
+      ],
+      id: null,
+      name: null,
+    };
+  }
+  return { nodes: [], edges: [], id: null, name: null };
+};
 
 function IntrigueMapInner() {
   const { screenToFlowPosition } = useReactFlow();
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const initial = getInitialData();
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [currentMapId, setCurrentMapId] = useState(initial.id);
+  const [currentMapName, setCurrentMapName] = useState(initial.name);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [addForm, setAddForm] = useState(null);
   const [modalAddOpen, setModalAddOpen] = useState(false);
+  const [modalMapsOpen, setModalMapsOpen] = useState(false);
+  const saveTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!currentMapId) return;
+    saveTimeoutRef.current = setTimeout(() => {
+      const map = getMap(currentMapId);
+      saveMap({
+        id: currentMapId,
+        name: map?.name ?? currentMapName ?? 'Nowa mapa',
+        nodes,
+        edges,
+      });
+    }, 500);
+    return () => clearTimeout(saveTimeoutRef.current);
+  }, [currentMapId, nodes, edges, currentMapName]);
 
   const onNodeClick = useCallback((_, node) => {
     setSelectedNode(node);
@@ -82,7 +107,6 @@ function IntrigueMapInner() {
           data: {
             label: addForm.label || 'Nowy ośrodek',
             nodeType: addForm.nodeType,
-            icon: addForm.icon || (NODE_TYPES[addForm.nodeType]?.icon ?? ''),
           },
         };
         setNodes((nds) => [...nds, newNode]);
@@ -148,7 +172,6 @@ function IntrigueMapInner() {
     setAddForm({
       label: '',
       nodeType: 'place',
-      icon: NODE_TYPES.place.icon,
     });
     setModalAddOpen(true);
     setSelectedNode(null);
@@ -165,13 +188,46 @@ function IntrigueMapInner() {
     // addForm stays set – next pane click will place the node
   };
 
+  const handleLoadMap = useCallback((map) => {
+    setNodes(map.nodes ?? []);
+    setEdges(map.edges ?? []);
+    setCurrentMapId(map.id);
+    setCurrentMapName(map.name);
+    setSelectedNode(null);
+    setSelectedEdge(null);
+  }, [setNodes, setEdges]);
+
+  const handleNewMap = useCallback((map) => {
+    setNodes(map.nodes ?? []);
+    setEdges(map.edges ?? []);
+    setCurrentMapId(map.id);
+    setCurrentMapName(map.name);
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setModalAddOpen(false);
+  }, [setNodes, setEdges]);
+
+  const handleRenameMap = useCallback((newName) => {
+    setCurrentMapName(newName);
+  }, []);
+
   const addFormState = modalAddOpen ? addForm : null;
 
   return (
     <div className="intrigue-map">
       <header className="intrigue-topbar">
-        <h1 className="intrigue-topbar__title">Mapa intrygi</h1>
+        <h1 className="intrigue-topbar__title">
+          {currentMapName ?? 'Mapa intrygi'}
+        </h1>
         <nav className="intrigue-topbar__nav">
+          <button
+            type="button"
+            className="intrigue-topbar__btn intrigue-topbar__btn--secondary"
+            onClick={() => setModalMapsOpen(true)}
+            title="Zarządzaj mapami"
+          >
+            Mapy
+          </button>
           <button
             type="button"
             className="intrigue-topbar__btn"
@@ -225,14 +281,7 @@ function IntrigueMapInner() {
             <span>Typ</span>
             <select
               value={addFormState?.nodeType ?? 'place'}
-              onChange={(e) => {
-                const opt = NODE_TYPE_OPTIONS.find((o) => o.value === e.target.value);
-                setAddForm((f) => ({
-                  ...f,
-                  nodeType: e.target.value,
-                  icon: opt?.icon ?? f?.icon,
-                }));
-              }}
+              onChange={(e) => setAddForm((f) => ({ ...f, nodeType: e.target.value }))}
             >
               {NODE_TYPE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -248,16 +297,6 @@ function IntrigueMapInner() {
               value={addFormState?.label ?? ''}
               onChange={(e) => setAddForm((f) => ({ ...f, label: e.target.value }))}
               placeholder="Nazwa"
-            />
-          </label>
-          <label className="edit-panel__field">
-            <span>Ikona</span>
-            <input
-              type="text"
-              value={addFormState?.icon ?? ''}
-              onChange={(e) => setAddForm((f) => ({ ...f, icon: e.target.value }))}
-              placeholder="emoji"
-              maxLength={4}
             />
           </label>
           <div className="edit-panel__actions">
@@ -289,6 +328,19 @@ function IntrigueMapInner() {
           />
         )}
       </Modal>
+
+      {/* Modal: Zarządzanie mapami */}
+      <MapsManagerModal
+        isOpen={modalMapsOpen}
+        onClose={() => setModalMapsOpen(false)}
+        currentMapId={currentMapId}
+        currentMapName={currentMapName}
+        nodes={nodes}
+        edges={edges}
+        onLoadMap={handleLoadMap}
+        onNewMap={handleNewMap}
+        onRenameMap={handleRenameMap}
+      />
 
       {/* Modal: Edycja połączenia */}
       <Modal
